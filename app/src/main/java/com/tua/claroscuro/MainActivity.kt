@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private val shutterSound = MediaActionSound()
     private var toneGen: ToneGenerator? = null
     private var orientationListener: OrientationEventListener? = null
+    private var sensorRotation = 90
 
     // ---------- Estado que ve la pantalla ----------
     val permiso = mutableStateOf(false)
@@ -221,7 +222,12 @@ class MainActivity : ComponentActivity() {
             st.setDefaultBufferSize(res.width, res.height)
             request.setTransformationInfoListener(main) { info ->
                 val rot = info.rotationDegrees
-                glView?.renderer?.rotation = rot.toFloat()
+                // Android ya gira (y refleja en la frontal) la imagen dentro de la textura,
+                // así que el visor NO debe girarla otra vez. Guardamos el giro del sensor
+                // solo para calcular bien el punto de enfoque.
+                sensorRotation = rot
+                glView?.renderer?.rotation = 0f
+                glView?.renderer?.mirror = false
                 aspecto.floatValue = if (rot % 180 == 0) res.width.toFloat() / res.height
                 else res.height.toFloat() / res.width
             }
@@ -247,7 +253,6 @@ class MainActivity : ComponentActivity() {
             provider.unbindAll()
             camera = provider.bindToLifecycle(this, selector, preview, capture)
             imageCapture = capture
-            glView?.renderer?.mirror = frontal.value
             zoom.floatValue = 1f
         } catch (e: Exception) {
             Toast.makeText(this, "No se pudo abrir la cámara", Toast.LENGTH_SHORT).show()
@@ -275,7 +280,7 @@ class MainActivity : ComponentActivity() {
         var u = x
         val v = y
         if (frontal.value) u = 1f - u
-        val rot = (glView?.renderer?.rotation ?: 90f).roundToInt()
+        val rot = sensorRotation
         val (bx, by) = when (rot) {
             90 -> v to (1f - u)
             180 -> (1f - u) to (1f - v)
