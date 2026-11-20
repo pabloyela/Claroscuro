@@ -54,7 +54,9 @@ class BwRenderer(private val view: GLSurfaceView) : GLSurfaceView.Renderer {
     private var uFade = 0
     private var uTone = 0
     private var uToneAmount = 0
-    private var uSelective = 0
+    private var uColorKeep = 0
+    private var uRed = 0
+    private var uIntensity = 0
     private var uGrain = 0
     private var uVignette = 0
     private var uGrainRes = 0
@@ -92,7 +94,9 @@ class BwRenderer(private val view: GLSurfaceView) : GLSurfaceView.Renderer {
         uFade = GLES20.glGetUniformLocation(program, "uFade")
         uTone = GLES20.glGetUniformLocation(program, "uTone")
         uToneAmount = GLES20.glGetUniformLocation(program, "uToneAmount")
-        uSelective = GLES20.glGetUniformLocation(program, "uSelective")
+        uColorKeep = GLES20.glGetUniformLocation(program, "uColorKeep")
+        uRed = GLES20.glGetUniformLocation(program, "uRed")
+        uIntensity = GLES20.glGetUniformLocation(program, "uIntensity")
         uGrain = GLES20.glGetUniformLocation(program, "uGrain")
         uVignette = GLES20.glGetUniformLocation(program, "uVignette")
         uGrainRes = GLES20.glGetUniformLocation(program, "uGrainRes")
@@ -141,7 +145,9 @@ class BwRenderer(private val view: GLSurfaceView) : GLSurfaceView.Renderer {
         GLES20.glUniform1f(uFade, u.fade)
         GLES20.glUniform3f(uTone, u.toneR, u.toneG, u.toneB)
         GLES20.glUniform1f(uToneAmount, u.toneAmount)
-        GLES20.glUniform1f(uSelective, if (u.selective) 1f else 0f)
+        GLES20.glUniform1f(uColorKeep, u.colorKeep)
+        GLES20.glUniform1f(uRed, u.red)
+        GLES20.glUniform1f(uIntensity, u.intensity)
         GLES20.glUniform1f(uGrain, u.grain)
         GLES20.glUniform1f(uVignette, u.vignette)
         GLES20.glUniform2f(uGrainRes, GRANOS_ANCHO, GRANOS_ANCHO * viewH / viewW)

@@ -26,12 +26,18 @@ enum class Estilo(
     val vineta: Float = 0f,
     val tono: FloatArray? = null,
     val tonoCantidad: Float = 0f,
-    val selectivo: Boolean = false
+    val color: Float = 0f,  // cuánto color original conserva (0 = B/N puro)
+    val rojos: Float = 0f   // cuánto destacan los rojos (0..1)
 ) {
     CLASICO("Clásico", floatArrayOf(0.2126f, 0.7152f, 0.0722f)),
     NOIR(
         "Noir", floatArrayOf(0.2126f, 0.7152f, 0.0722f),
         contraste = 0.35f, curva = 0.6f, gamma = 1.2f, grano = 0.1f, vineta = 0.55f
+    ),
+    DRAMATICO(
+        "Dramático", floatArrayOf(0.2126f, 0.7152f, 0.0722f),
+        contraste = 0.22f, curva = 0.45f, gamma = 1.1f, fade = 0.02f, grano = 0.06f, vineta = 0.6f,
+        color = 0.28f
     ),
     ROJO(
         "Filtro rojo", floatArrayOf(0.85f, 0.25f, -0.10f),
@@ -55,7 +61,7 @@ enum class Estilo(
     ),
     SELECTIVO(
         "Rojo selectivo", floatArrayOf(0.2126f, 0.7152f, 0.0722f),
-        contraste = 0.1f, curva = 0.25f, vineta = 0.15f, selectivo = true
+        contraste = 0.1f, curva = 0.25f, vineta = 0.15f, rojos = 1f
     ),
     SEPIA(
         "Sepia", floatArrayOf(0.2126f, 0.7152f, 0.0722f),
@@ -71,14 +77,16 @@ enum class Estilo(
 
 /** Ajustes que el usuario mueve con los deslizadores. */
 data class Ajustes(
-    val contraste: Float = 0f, // -1..1
-    val brillo: Float = 0f,    // -1..1
-    val grano: Float = 0f,     // 0..1
-    val vineta: Float = 0f     // 0..1
+    val contraste: Float = 0f,  // -1..1
+    val brillo: Float = 0f,     // -1..1
+    val grano: Float = 0f,      // 0..1
+    val vineta: Float = 0f,     // 0..1
+    val intensidad: Float = 1f, // 0 = foto original, 1 = efecto completo
+    val rojos: Float = 0f       // 0..1
 ) {
     companion object {
         fun de(e: Estilo, base: Ajustes = Ajustes()) =
-            base.copy(grano = e.grano, vineta = e.vineta)
+            base.copy(grano = e.grano, vineta = e.vineta, rojos = e.rojos)
     }
 }
 
@@ -92,7 +100,9 @@ data class FxUniforms(
     val fade: Float,
     val toneR: Float, val toneG: Float, val toneB: Float,
     val toneAmount: Float,
-    val selective: Boolean,
+    val colorKeep: Float,
+    val red: Float,
+    val intensity: Float,
     val grain: Float,
     val vignette: Float
 ) {
@@ -108,7 +118,9 @@ data class FxUniforms(
                 fade = e.fade,
                 toneR = t[0], toneG = t[1], toneB = t[2],
                 toneAmount = if (e.tono != null) e.tonoCantidad else 0f,
-                selective = e.selectivo,
+                colorKeep = e.color,
+                red = a.rojos,
+                intensity = a.intensidad,
                 grain = a.grano,
                 vignette = a.vineta
             )
@@ -160,8 +172,10 @@ object Fx {
         val lr = FloatArray(n)
         val lg = FloatArray(n)
         val lb = FloatArray(n)
+        val ly = FloatArray(n)
         for (i in 0 until n) {
             val y = toneCurve(i / (n - 1f), u)
+            ly[i] = y
             var r = y
             var g = y
             var b = y
@@ -211,15 +225,35 @@ object Fx {
                             var g = lg[idx]
                             var b = lb[idx]
 
-                            if (u.selective) {
-                                val mx = maxOf(cr, cg, cb)
-                                val mn = minOf(cr, cg, cb)
-                                val sat = mx - mn
-                                val red = (cr - maxOf(cg, cb)) / maxOf(cr, 0.001f)
-                                val keep = smoothstep(0.2f, 0.45f, red) * smoothstep(0.08f, 0.2f, sat)
-                                r += (cr - r) * keep
-                                g += (cg - g) * keep
-                                b += (cb - b) * keep
+                            if (u.colorKeep > 0f || u.red > 0f) {
+                                val yF = ly[idx]
+                                val lum0 = maxOf(cr * 0.2126f + cg * 0.7152f + cb * 0.0722f, 0.001f)
+                                val k = yF / lum0
+                                val colR = (cr * k).coerceIn(0f, 1f)
+                                val colG = (cg * k).coerceIn(0f, 1f)
+                                val colB = (cb * k).coerceIn(0f, 1f)
+                                if (u.colorKeep > 0f) {
+                                    r += (colR - r) * u.colorKeep
+                                    g += (colG - g) * u.colorKeep
+                                    b += (colB - b) * u.colorKeep
+                                }
+                                if (u.red > 0f) {
+                                    val mx = maxOf(cr, cg, cb)
+                                    val mn = minOf(cr, cg, cb)
+                                    val sat = mx - mn
+                                    val red = (cr - maxOf(cg, cb)) / maxOf(cr, 0.001f)
+                                    val keep = smoothstep(0.15f, 0.4f, red) * smoothstep(0.06f, 0.18f, sat)
+                                    // el rojo conserva su brillo original y gana saturación
+                                    val l = cr * 0.2126f + cg * 0.7152f + cb * 0.0722f
+                                    val sv = 1f + 0.6f * u.red
+                                    val vr = (l + (cr - l) * sv).coerceIn(0f, 1f)
+                                    val vg = (l + (cg - l) * sv).coerceIn(0f, 1f)
+                                    val vb = (l + (cb - l) * sv).coerceIn(0f, 1f)
+                                    val wgt = keep * minOf(1f, u.red * 1.5f)
+                                    r += (vr - r) * wgt
+                                    g += (vg - g) * wgt
+                                    b += (vb - b) * wgt
+                                }
                             }
 
                             val uu = (xx + 0.5f) / w
@@ -234,6 +268,11 @@ object Fx {
                                 r += nz; g += nz; b += nz
                             }
 
+                            if (u.intensity < 1f) {
+                                r = cr + (r.coerceIn(0f, 1f) - cr) * u.intensity
+                                g = cg + (g.coerceIn(0f, 1f) - cg) * u.intensity
+                                b = cb + (b.coerceIn(0f, 1f) - cb) * u.intensity
+                            }
                             val ir = (r.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
                             val ig = (g.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
                             val ib = (b.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
@@ -287,7 +326,9 @@ uniform float uGamma;
 uniform float uFade;
 uniform vec3 uTone;
 uniform float uToneAmount;
-uniform float uSelective;
+uniform float uColorKeep;
+uniform float uRed;
+uniform float uIntensity;
 uniform float uGrain;
 uniform float uVignette;
 uniform vec2 uGrainRes;
@@ -315,13 +356,20 @@ void main() {
         else t = mix(uTone, vec3(1.0), (y - 0.5) * 2.0);
         g = mix(g, t, uToneAmount);
     }
-    if (uSelective > 0.5) {
-        float mx = max(c.r, max(c.g, c.b));
-        float mn = min(c.r, min(c.g, c.b));
-        float sat = mx - mn;
-        float red = (c.r - max(c.g, c.b)) / max(c.r, 0.001);
-        float keep = smoothstep(0.2, 0.45, red) * smoothstep(0.08, 0.2, sat);
-        g = mix(g, c, keep);
+    if (uColorKeep > 0.0 || uRed > 0.0) {
+        float lum0 = max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.001);
+        vec3 col = clamp(c * (y / lum0), 0.0, 1.0);
+        if (uColorKeep > 0.0) g = mix(g, col, uColorKeep);
+        if (uRed > 0.0) {
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float sat = mx - mn;
+            float red = (c.r - max(c.g, c.b)) / max(c.r, 0.001);
+            float keep = smoothstep(0.15, 0.4, red) * smoothstep(0.06, 0.18, sat);
+            float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            vec3 vivo = clamp(mix(vec3(l), c, 1.0 + 0.6 * uRed), 0.0, 1.0);
+            g = mix(g, vivo, keep * min(1.0, uRed * 1.5));
+        }
     }
     vec2 d = vUv - 0.5;
     float vv = smoothstep(0.3, 0.75, length(d));
@@ -329,6 +377,7 @@ void main() {
     float n = hash12(floor(vUv * uGrainRes) + uSeed) - 0.5;
     g += n * uGrain * 0.3;
     g = clamp(g, 0.0, 1.0);
+    g = mix(c, g, uIntensity);
     //MARCA
     gl_FragColor = vec4(g, 1.0);
 }

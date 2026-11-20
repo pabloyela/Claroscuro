@@ -33,22 +33,38 @@ object Sello {
         setShadowLayer(size * 0.15f, 0f, size * 0.06f, 0xCC000000.toInt())
     }
 
-    /** Dibuja el sello abajo a la derecha de una foto (la foto debe ser editable). */
-    fun dibujar(bmp: Bitmap, texto: String) {
+    /** Líneas del sello: la firma (si hay) arriba y la fecha abajo. */
+    fun lineas(fecha: String, firma: String): List<String> =
+        if (firma.isBlank()) listOf(fecha) else listOf(firma.trim(), fecha)
+
+    /** Dibuja el sello abajo a la izquierda de una foto (la foto debe ser editable). */
+    fun dibujar(bmp: Bitmap, fecha: String, firma: String) {
         val corto = min(bmp.width, bmp.height).toFloat()
-        val p = pincel(corto * 0.04f)
+        val size = corto * 0.034f
+        val p = pincel(size)
         val margen = corto * 0.035f
-        val ancho = p.measureText(texto)
-        Canvas(bmp).drawText(texto, bmp.width - margen - ancho, bmp.height - margen, p)
+        val ls = lineas(fecha, firma)
+        val canvas = Canvas(bmp)
+        var y = bmp.height - margen - (ls.size - 1) * size * 1.25f
+        for (l in ls) {
+            canvas.drawText(l, margen, y, p)
+            y += size * 1.25f
+        }
     }
 
-    /** Imagen pequeña con el texto, para pegarla sobre cada cuadro del video. */
-    fun imagen(texto: String, size: Float): Bitmap {
+    /** Imagen pequeña con el sello, para pegarla sobre cada cuadro del video. */
+    fun imagen(fecha: String, firma: String, size: Float): Bitmap {
         val p = pincel(size)
-        val w = (p.measureText(texto) + size * 0.6f).toInt().coerceAtLeast(1)
-        val h = (size * 1.5f).toInt().coerceAtLeast(1)
+        val ls = lineas(fecha, firma)
+        val w = (ls.maxOf { p.measureText(it) } + size * 0.6f).toInt().coerceAtLeast(1)
+        val h = (size * (0.5f + 1.25f * ls.size)).toInt().coerceAtLeast(1)
         val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        Canvas(b).drawText(texto, size * 0.3f, size * 1.1f, p)
+        val c = Canvas(b)
+        var y = size * 1.1f
+        for (l in ls) {
+            c.drawText(l, size * 0.3f, y, p)
+            y += size * 1.25f
+        }
         return b
     }
 }
@@ -56,15 +72,17 @@ object Sello {
 /** Efecto de Media3 que aplica el mismo blanco y negro del visor a cada cuadro del video. */
 class BnVideoEffect(
     private val u: FxUniforms,
-    private val inicioMs: Long? // hora de inicio de la grabación; null = sin sello
+    private val inicioMs: Long?, // hora de inicio de la grabación; null = sin sello
+    private val firma: String
 ) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        BnShaderProgram(u, inicioMs)
+        BnShaderProgram(u, inicioMs, firma)
 }
 
 class BnShaderProgram(
     private val u: FxUniforms,
-    private val inicioMs: Long?
+    private val inicioMs: Long?,
+    private val firma: String
 ) : BaseGlShaderProgram(false, 1) {
 
     private val program: GlProgram = try {
@@ -106,7 +124,9 @@ class BnShaderProgram(
             program.setFloatUniform("uFade", u.fade)
             program.setFloatsUniform("uTone", floatArrayOf(u.toneR, u.toneG, u.toneB))
             program.setFloatUniform("uToneAmount", u.toneAmount)
-            program.setFloatUniform("uSelective", if (u.selective) 1f else 0f)
+            program.setFloatUniform("uColorKeep", u.colorKeep)
+            program.setFloatUniform("uRed", u.red)
+            program.setFloatUniform("uIntensity", u.intensity)
             program.setFloatUniform("uGrain", u.grain)
             program.setFloatUniform("uVignette", u.vignette)
             program.setFloatsUniform("uGrainRes", floatArrayOf(GRANOS_ANCHO, GRANOS_ANCHO * h / w))
@@ -132,10 +152,10 @@ class BnShaderProgram(
         ultimoSegundo = segundo
 
         val corto = min(w, h).toFloat()
-        val bmp = Sello.imagen(Sello.texto(ms, conSegundos = true), corto * 0.04f)
+        val bmp = Sello.imagen(Sello.texto(ms, conSegundos = true), firma, corto * 0.034f)
         val margen = corto * 0.035f
-        val x1 = 1f - margen / w
-        val x0 = x1 - bmp.width.toFloat() / w
+        val x0 = margen / w
+        val x1 = x0 + bmp.width.toFloat() / w
         val y0 = margen / h
         val y1 = y0 + bmp.height.toFloat() / h
         rect = floatArrayOf(x0, y0, x1, y1)

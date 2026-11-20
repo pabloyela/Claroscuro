@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.media.AudioManager
@@ -24,6 +25,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -111,6 +113,13 @@ class MainActivity : ComponentActivity() {
     val fecha = mutableStateOf(false)
     val formato169 = mutableStateOf(false) // fotos en 16:9 (si no, 4:3)
     val giroUi = mutableIntStateOf(0)       // giro de los íconos según cómo sostienes el teléfono
+    val firma = mutableStateOf("")          // nombre que aparece arriba de la fecha
+    val editorUri = mutableStateOf<Uri?>(null)     // foto de la galería que se está editando
+    val editorBase = mutableStateOf<Bitmap?>(null) // versión reducida para la vista previa
+
+    private val pickLauncher = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) abrirEditor(uri)
+    }
     val modoVideo = mutableStateOf(false)
     val grabando = mutableStateOf(false)
     val tiempoGrabacion = mutableLongStateOf(0L)
@@ -142,8 +151,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ClaroTheme {
-                if (permiso.value) CameraScreen(this)
-                else PermissionScreen { permLauncher.launch(Manifest.permission.CAMERA) }
+                when {
+                    editorUri.value != null -> EditorScreen(this)
+                    permiso.value -> CameraScreen(this)
+                    else -> PermissionScreen { permLauncher.launch(Manifest.permission.CAMERA) }
+                }
             }
         }
 
@@ -208,6 +220,11 @@ class MainActivity : ComponentActivity() {
         flash.intValue = prefs.getInt("flash", ImageCapture.FLASH_MODE_OFF)
         fecha.value = prefs.getBoolean("fecha", false)
         formato169.value = prefs.getBoolean("formato169", false)
+        firma.value = prefs.getString("firma", "") ?: ""
+        ajustes.value = ajustes.value.copy(
+            intensidad = prefs.getFloat("intensidad", 1f),
+            rojos = prefs.getFloat("rojos", estilo.value.rojos)
+        )
     }
 
     fun savePrefs() {
@@ -226,6 +243,9 @@ class MainActivity : ComponentActivity() {
             .putInt("flash", flash.intValue)
             .putBoolean("fecha", fecha.value)
             .putBoolean("formato169", formato169.value)
+            .putString("firma", firma.value)
+            .putFloat("intensidad", a.intensidad)
+            .putFloat("rojos", a.rojos)
             .apply()
     }
 
@@ -412,6 +432,7 @@ class MainActivity : ComponentActivity() {
         val u = FxUniforms.from(estilo.value, ajustes.value) // el estilo del momento del disparo
         val saveColor = guardarColor.value
         val sello = if (fecha.value) Sello.texto(System.currentTimeMillis(), conSegundos = false) else null
+        val miFirma = firma.value
         if (sonido.value) shutterSound.play(MediaActionSound.SHUTTER_CLICK)
         guardando.intValue++
         ic.takePicture(cameraExecutor, object : ImageCapture.OnImageCapturedCallback() {
@@ -426,7 +447,7 @@ class MainActivity : ComponentActivity() {
                 }
                 lifecycleScope.launch {
                     try {
-                        if (bmp != null) processAndSave(bmp, rot, u, saveColor, sello)
+                        if (bmp != null) processAndSave(bmp, rot, u, saveColor, sello, miFirma)
                         else aviso("No se pudo leer la foto")
                     } catch (e: Throwable) {
                         aviso("No se pudo guardar la foto")
@@ -449,13 +470,20 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 
-    private suspend fun processAndSave(src: Bitmap, rot: Int, u: FxUniforms, saveColor: Boolean, sello: String?) {
+    private suspend fun processAndSave(
+        src: Bitmap,
+        rot: Int,
+        u: FxUniforms,
+        saveColor: Boolean,
+        sello: String?,
+        miFirma: String
+    ) {
         var upright = withContext(Dispatchers.Default) { rotate(src, rot) }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val carpeta = "${Environment.DIRECTORY_PICTURES}/Claroscuro"
         // Primero el blanco y negro (de la imagen limpia), luego el sello en cada versión
         val bw = Fx.apply(upright, u)
-        if (sello != null) withContext(Dispatchers.Default) { Sello.dibujar(bw, sello) }
+        if (sello != null) withContext(Dispatchers.Default) { Sello.dibujar(bw, sello, miFirma) }
         if (saveColor) {
             if (sello != null) {
                 if (!upright.isMutable) {
@@ -464,7 +492,7 @@ class MainActivity : ComponentActivity() {
                     upright = copia
                 }
                 val conSello = upright
-                withContext(Dispatchers.Default) { Sello.dibujar(conSello, sello) }
+                withContext(Dispatchers.Default) { Sello.dibujar(conSello, sello, miFirma) }
             }
             val original = upright
             withContext(Dispatchers.IO) { saveJpeg(original, "BN_${stamp}_color.jpg", "$carpeta/Originales") }
@@ -574,6 +602,7 @@ class MainActivity : ComponentActivity() {
         val u = FxUniforms.from(estilo.value, ajustes.value) // el estilo al iniciar
         val saveColor = guardarColor.value
         val conFecha = fecha.value
+        val miFirma = firma.value
         val tmp = File(cacheDir, "grab_${System.currentTimeMillis()}.mp4")
         var pending = vc.output.prepareRecording(this, FileOutputOptions.Builder(tmp).build())
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -598,7 +627,7 @@ class MainActivity : ComponentActivity() {
                     recording = null
                     if (sonido.value) shutterSound.play(MediaActionSound.STOP_VIDEO_RECORDING)
                     if (tmp.exists() && tmp.length() > 0) {
-                        procesarVideo(tmp, u, saveColor, if (conFecha) inicio else null)
+                        procesarVideo(tmp, u, saveColor, if (conFecha) inicio else null, miFirma)
                     } else {
                         aviso("No se pudo grabar el video")
                     }
@@ -609,10 +638,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Convierte el video grabado a blanco y negro (con el mismo efecto del visor). */
-    private fun procesarVideo(tmp: File, u: FxUniforms, saveColor: Boolean, inicioMs: Long?) {
+    private fun procesarVideo(tmp: File, u: FxUniforms, saveColor: Boolean, inicioMs: Long?, miFirma: String) {
         procesando.value = 0f
         val salida = File(cacheDir, "bn_${System.currentTimeMillis()}.mp4")
-        val efectos: List<Effect> = listOf(BnVideoEffect(u, inicioMs))
+        val efectos: List<Effect> = listOf(BnVideoEffect(u, inicioMs, miFirma))
         val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(tmp)))
             .setEffects(Effects(emptyList<AudioProcessor>(), efectos))
             .build()
@@ -700,10 +729,114 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ---------- Editor de fotos de la galería ----------
+
+    fun elegirFoto() {
+        if (grabando.value) return
+        pickLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
+    /** Abre una foto (ya derecha) con el lado largo limitado a [maxLado] píxeles. */
+    private fun decodificar(uri: Uri, maxLado: Int): Bitmap? = try {
+        val src = ImageDecoder.createSource(contentResolver, uri)
+        ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+            val w = info.size.width
+            val h = info.size.height
+            val escala = minOf(1f, maxLado.toFloat() / maxOf(w, h))
+            if (escala < 1f) {
+                decoder.setTargetSize((w * escala).toInt().coerceAtLeast(1), (h * escala).toInt().coerceAtLeast(1))
+            }
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            decoder.isMutableRequired = true
+        }
+    } catch (e: Throwable) {
+        null
+    }
+
+    private fun abrirEditor(uri: Uri) {
+        cameraProvider?.unbindAll()
+        editorBase.value = null
+        editorUri.value = uri
+        lifecycleScope.launch {
+            val b = withContext(Dispatchers.IO) { decodificar(uri, 1280) }
+            if (b == null) {
+                aviso("No se pudo abrir la foto")
+                cerrarEditor()
+            } else {
+                editorBase.value = b
+            }
+        }
+    }
+
+    fun cerrarEditor() {
+        editorUri.value = null
+        editorBase.value = null
+        // Al volver a la cámara, el visor se crea de nuevo y vuelve a conectar la cámara
+    }
+
+    /** Fecha en que se tomó la foto (si se puede leer); si no, la hora actual. */
+    private fun fechaDeFoto(uri: Uri): Long {
+        try {
+            contentResolver.query(uri, arrayOf(MediaStore.Images.Media.DATE_TAKEN), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) {
+                    val t = c.getLong(0)
+                    if (t > 0) return t
+                }
+            }
+        } catch (e: Exception) {
+            // el selector de fotos no siempre da la fecha
+        }
+        return System.currentTimeMillis()
+    }
+
+    fun guardarEdicion() {
+        val uri = editorUri.value ?: return
+        val u = FxUniforms.from(estilo.value, ajustes.value)
+        val conFecha = fecha.value
+        val miFirma = firma.value
+        guardando.intValue++
+        lifecycleScope.launch {
+            try {
+                val full = withContext(Dispatchers.IO) { decodificar(uri, 4000) }
+                if (full == null) {
+                    aviso("No se pudo abrir la foto")
+                    return@launch
+                }
+                val bw = Fx.apply(full, u)
+                full.recycle()
+                if (conFecha) {
+                    val texto = Sello.texto(withContext(Dispatchers.IO) { fechaDeFoto(uri) }, conSegundos = false)
+                    withContext(Dispatchers.Default) { Sello.dibujar(bw, texto, miFirma) }
+                }
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+                val out = withContext(Dispatchers.IO) {
+                    saveJpeg(bw, "BN_edit_$stamp.jpg", "${Environment.DIRECTORY_PICTURES}/Claroscuro")
+                }
+                val thumb = withContext(Dispatchers.Default) {
+                    val th = (240f * bw.height / bw.width).toInt().coerceAtLeast(1)
+                    Bitmap.createScaledBitmap(bw, 240, th, true)
+                }
+                bw.recycle()
+                if (out != null) {
+                    miniatura.value = thumb
+                    ultimaUri.value = out
+                    ultimaMime = "image/jpeg"
+                    aviso("Guardada en Imágenes/Claroscuro")
+                } else {
+                    aviso("No se pudo guardar la foto")
+                }
+            } catch (e: Throwable) {
+                aviso("No se pudo guardar la foto")
+            } finally {
+                guardando.intValue--
+            }
+        }
+    }
+
     // ---------- Botones de volumen como disparador ----------
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (permiso.value && teclaVolumen.value &&
+        if (permiso.value && teclaVolumen.value && editorUri.value == null &&
             (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
         ) {
             if ((event?.repeatCount ?: 0) == 0) disparoVolumen.intValue++
@@ -713,7 +846,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        if (permiso.value && teclaVolumen.value &&
+        if (permiso.value && teclaVolumen.value && editorUri.value == null &&
             (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
         ) return true
         return super.onKeyUp(keyCode, event)

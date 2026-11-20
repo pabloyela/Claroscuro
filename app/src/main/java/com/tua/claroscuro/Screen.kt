@@ -1,5 +1,6 @@
 package com.tua.claroscuro
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -25,11 +26,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Cameraswitch
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.FlashAuto
@@ -51,7 +56,9 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.TimerOff
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -63,7 +70,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -91,6 +100,9 @@ import androidx.camera.core.ImageCapture
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -152,6 +164,7 @@ fun CameraScreen(a: MainActivity) {
     var foco by remember { mutableStateOf<Offset?>(null) }
     val parpadeo = remember { Animatable(0f) }
     val giro by animateFloatAsState(a.giroUi.intValue.toFloat(), label = "giro")
+    DisposableEffect(Unit) { onDispose { a.glView = null } }
 
     fun disparar() {
         if (timerJob?.isActive == true && cuenta > 0) { // tocar otra vez cancela la cuenta regresiva
@@ -390,30 +403,11 @@ fun CameraScreen(a: MainActivity) {
 
             // Panel de deslizadores
             Desvanecer(visible = panel, modifier = Modifier.align(Alignment.BottomCenter)) {
-                Column(
-                    Modifier.fillMaxWidth().background(Color(0xB3000000))
+                Deslizadores(
+                    a,
+                    Modifier.fillMaxWidth().heightIn(max = 300.dp).background(Color(0xB3000000))
                         .padding(horizontal = Margen, vertical = 8.dp)
-                ) {
-                    AjusteSlider("Contraste", ajustes.contraste, -1f..1f) {
-                        a.ajustes.value = ajustes.copy(contraste = it)
-                    }
-                    AjusteSlider("Brillo", ajustes.brillo, -1f..1f) {
-                        a.ajustes.value = ajustes.copy(brillo = it)
-                    }
-                    AjusteSlider("Grano", ajustes.grano, 0f..1f) {
-                        a.ajustes.value = ajustes.copy(grano = it)
-                    }
-                    AjusteSlider("Viñeta", ajustes.vineta, 0f..1f) {
-                        a.ajustes.value = ajustes.copy(vineta = it)
-                    }
-                    Row {
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = {
-                            a.ajustes.value = Ajustes.de(estilo)
-                            a.savePrefs()
-                        }) { Text("Restablecer", color = Color.White, fontSize = 15.sp) }
-                    }
-                }
+                )
             }
         }
 
@@ -452,6 +446,8 @@ fun CameraScreen(a: MainActivity) {
             ModoTab("FOTO", !a.modoVideo.value, enabled = !a.grabando.value) { a.setModo(false) }
             Spacer(Modifier.width(18.dp))
             ModoTab("VIDEO", a.modoVideo.value, enabled = !a.grabando.value) { a.setModo(true) }
+            Spacer(Modifier.width(18.dp))
+            ModoTab("EDITAR", false, enabled = !a.grabando.value) { a.elegirFoto() }
         }
 
         // ---------- Disparador ----------
@@ -606,5 +602,160 @@ private fun AjusteSlider(
             color = Color.White, fontSize = 13.sp, textAlign = TextAlign.End,
             modifier = Modifier.width(40.dp)
         )
+    }
+}
+
+/** Deslizadores compartidos por la cámara y el editor. */
+@Composable
+fun Deslizadores(a: MainActivity, modifier: Modifier = Modifier) {
+    val ajustes = a.ajustes.value
+    val estilo = a.estilo.value
+    var editandoFirma by remember { mutableStateOf(false) }
+    Column(modifier.verticalScroll(rememberScrollState())) {
+        AjusteSlider("Intensidad", ajustes.intensidad, 0f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(intensidad = it)
+        }
+        AjusteSlider("Rojos", ajustes.rojos, 0f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(rojos = it)
+        }
+        AjusteSlider("Contraste", ajustes.contraste, -1f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(contraste = it)
+        }
+        AjusteSlider("Brillo", ajustes.brillo, -1f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(brillo = it)
+        }
+        AjusteSlider("Grano", ajustes.grano, 0f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(grano = it)
+        }
+        AjusteSlider("Viñeta", ajustes.vineta, 0f..1f) {
+            a.ajustes.value = a.ajustes.value.copy(vineta = it)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { editandoFirma = true }) {
+                val f = a.firma.value
+                Text(
+                    if (f.isBlank()) "Firma: (ninguna)" else "Firma: $f",
+                    color = Color.White, fontSize = 15.sp, maxLines = 1
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = {
+                a.ajustes.value = Ajustes.de(estilo)
+                a.savePrefs()
+            }) { Text("Restablecer", color = Color.White, fontSize = 15.sp) }
+        }
+    }
+
+    if (editandoFirma) {
+        var texto by remember { mutableStateOf(a.firma.value) }
+        AlertDialog(
+            onDismissRequest = { editandoFirma = false },
+            title = { Text("Firma del sello") },
+            text = {
+                Column {
+                    Text(
+                        "Aparece arriba de la fecha cuando el botón Fecha está activo. Déjala vacía para no usar firma.",
+                        fontSize = 14.sp, color = Suave
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = texto,
+                        onValueChange = { if (it.length <= 30) texto = it },
+                        singleLine = true,
+                        placeholder = { Text("Ej. MalditoX") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    a.firma.value = texto.trim()
+                    a.savePrefs()
+                    editandoFirma = false
+                }) { Text("Guardar", color = Color.White) }
+            },
+            dismissButton = {
+                TextButton(onClick = { editandoFirma = false }) { Text("Cancelar", color = Suave) }
+            }
+        )
+    }
+}
+
+/** Editor: aplica los estilos a una foto que ya tienes y guarda una copia. */
+@Composable
+fun EditorScreen(a: MainActivity) {
+    val base = a.editorBase.value
+    val estilo = a.estilo.value
+    val ajustes = a.ajustes.value
+
+    BackHandler { a.cerrarEditor() }
+
+    // Vista previa: se recalcula en segundo plano cada vez que cambias algo
+    val vista by produceState<Bitmap?>(null, base, estilo, ajustes) {
+        if (base != null) {
+            delay(60)
+            value = withContext(Dispatchers.Default) { Fx.apply(base, FxUniforms.from(estilo, ajustes)) }
+        }
+    }
+
+    Column(
+        Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(52.dp).clip(CircleShape).clickable { a.cerrarEditor() },
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Rounded.Close, "Cerrar", tint = Color.White, modifier = Modifier.size(28.dp)) }
+            Text(
+                "Editar foto", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
+            )
+            Button(
+                onClick = {
+                    a.savePrefs()
+                    a.guardarEdicion()
+                },
+                enabled = base != null && a.guardando.intValue == 0,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+            ) {
+                if (a.guardando.intValue > 0) {
+                    CircularProgressIndicator(color = Color.Black, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                } else {
+                    Text("Guardar", fontSize = 16.sp)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+        }
+
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val img = vista ?: base
+            if (img != null) {
+                Image(
+                    img.asImageBitmap(), "Vista previa",
+                    contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (vista == null) CircularProgressIndicator(color = Color.White)
+        }
+
+        Deslizadores(
+            a,
+            Modifier.fillMaxWidth().height(250.dp).padding(horizontal = Margen, vertical = 4.dp)
+        )
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = Margen),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(vertical = 10.dp)
+        ) {
+            items(Estilo.entries) { e ->
+                Chip(texto = e.nombre, icono = null, activo = e == estilo) {
+                    a.estilo.value = e
+                    a.ajustes.value = Ajustes.de(e, a.ajustes.value)
+                }
+            }
+        }
     }
 }
