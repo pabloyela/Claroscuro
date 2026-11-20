@@ -6,9 +6,14 @@ visible **en vivo** en el visor.
 ## Qué trae
 
 **Arriba, todo a la vista (un toque cambia cada uno):**
-Flash (sin / auto / sí) · Temporizador (sin / 3 / 5 / 10 s) ·
-**Sonido / Silencio** del obturador · Cuadrícula · Guardar también el original
-a color · Disparar con las teclas de volumen.
+Flash (sin / auto / sí) · Timer (sin / 3 / 5 / 10 s) ·
+**Sonido / Silencio** · Rejilla · Color (guardar también el original) ·
+Tecla vol (disparar con volumen) · **Fecha** (sello de fecha y hora).
+
+**Foto / Video:** selector sobre el disparador. En video, el botón se pone rojo;
+mientras grabas ves el tiempo arriba del visor. Al detener, el video se
+convierte al estilo elegido (con barra de progreso) y se guarda en
+`Películas/Claroscuro`. El reloj del sello avanza segundo a segundo.
 
 **Estilos:** Clásico · Noir · Filtro rojo · Filtro amarillo · Filtro verde ·
 Infrarrojo · Película (con grano) · Rojo selectivo · Sepia · Cianotipo.

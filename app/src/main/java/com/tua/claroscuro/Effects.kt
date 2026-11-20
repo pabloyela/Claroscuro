@@ -275,10 +275,8 @@ void main() {
 }
 """
 
-const val FRAGMENT_SHADER = """
-#extension GL_OES_EGL_image_external : require
-precision highp float;
-uniform samplerExternalOES uTex;
+/** Cuerpo común del efecto (visor y video). */
+private const val FX_BODY = """
 varying vec2 vUv;
 varying vec2 vTex;
 uniform vec3 uMix;
@@ -330,6 +328,44 @@ void main() {
     g *= 1.0 - uVignette * 0.85 * vv;
     float n = hash12(floor(vUv * uGrainRes) + uSeed) - 0.5;
     g += n * uGrain * 0.3;
-    gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
+    g = clamp(g, 0.0, 1.0);
+    //MARCA
+    gl_FragColor = vec4(g, 1.0);
+}
+"""
+
+private const val MARK_CODE = """
+    if (vUv.x >= uMarkRect.x && vUv.x <= uMarkRect.z && vUv.y >= uMarkRect.y && vUv.y <= uMarkRect.w) {
+        vec2 mUv = vec2((vUv.x - uMarkRect.x) / (uMarkRect.z - uMarkRect.x),
+                        1.0 - (vUv.y - uMarkRect.y) / (uMarkRect.w - uMarkRect.y));
+        vec4 m = texture2D(uMark, mUv);
+        g = g * (1.0 - m.a) + m.rgb;
+    }
+"""
+
+/**
+ * Arma el fragment shader.
+ * external = true para el visor (textura de cámara); false para procesar video.
+ * mark = true agrega el sello de fecha y hora.
+ */
+fun fragmentShader(external: Boolean, mark: Boolean): String {
+    val head = if (external) {
+        "#extension GL_OES_EGL_image_external : require\nprecision highp float;\nuniform samplerExternalOES uTex;\n"
+    } else {
+        "precision highp float;\nuniform sampler2D uTex;\n"
+    }
+    val markDecl = if (mark) "uniform sampler2D uMark;\nuniform vec4 uMarkRect;\n" else ""
+    return head + markDecl + FX_BODY.replace("//MARCA", if (mark) MARK_CODE else "")
+}
+
+/** Vertex shader para procesar video con Media3. */
+const val VIDEO_VERTEX_SHADER = """
+attribute vec4 aFramePosition;
+varying vec2 vUv;
+varying vec2 vTex;
+void main() {
+    gl_Position = aFramePosition;
+    vUv = aFramePosition.xy * 0.5 + 0.5;
+    vTex = vUv;
 }
 """

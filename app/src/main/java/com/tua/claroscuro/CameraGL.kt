@@ -78,7 +78,7 @@ class BwRenderer(private val view: GLSurfaceView) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
-        program = buildProgram(VERTEX_SHADER, FRAGMENT_SHADER)
+        program = buildProgram(VERTEX_SHADER, fragmentShader(external = true, mark = false))
         aPos = GLES20.glGetAttribLocation(program, "aPos")
         uST = GLES20.glGetUniformLocation(program, "uST")
         uRot = GLES20.glGetUniformLocation(program, "uRot")

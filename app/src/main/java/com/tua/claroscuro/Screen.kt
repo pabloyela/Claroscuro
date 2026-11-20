@@ -37,6 +37,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Cameraswitch
+import androidx.compose.material.icons.rounded.DateRange
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.FlashAuto
 import androidx.compose.material.icons.rounded.FlashOff
 import androidx.compose.material.icons.rounded.FlashOn
@@ -52,6 +54,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -153,6 +156,10 @@ fun CameraScreen(a: MainActivity) {
             cuenta = 0
             return
         }
+        if (a.modoVideo.value && a.grabando.value) { // detener la grabación al instante
+            a.toggleRecording()
+            return
+        }
         val t = a.temporizador.intValue
         timerJob = scope.launch {
             for (s in t downTo 1) {
@@ -161,9 +168,13 @@ fun CameraScreen(a: MainActivity) {
                 delay(1000)
             }
             cuenta = 0
-            a.takePhoto()
-            parpadeo.snapTo(0.85f)
-            parpadeo.animateTo(0f, tween(260))
+            if (a.modoVideo.value) {
+                a.toggleRecording()
+            } else {
+                a.takePhoto()
+                parpadeo.snapTo(0.85f)
+                parpadeo.animateTo(0f, tween(260))
+            }
         }
     }
 
@@ -189,9 +200,9 @@ fun CameraScreen(a: MainActivity) {
                     else -> Icons.Rounded.FlashOff
                 },
                 when (fl) {
-                    ImageCapture.FLASH_MODE_ON -> "Flash sí"
+                    ImageCapture.FLASH_MODE_ON -> "Flash"
                     ImageCapture.FLASH_MODE_AUTO -> "Auto"
-                    else -> "Sin flash"
+                    else -> "Flash"
                 },
                 fl != ImageCapture.FLASH_MODE_OFF
             ) {
@@ -206,7 +217,7 @@ fun CameraScreen(a: MainActivity) {
             val t = a.temporizador.intValue
             Rapido(
                 if (t == 0) Icons.Rounded.TimerOff else Icons.Rounded.Timer,
-                if (t == 0) "Sin timer" else "$t s",
+                if (t == 0) "Timer" else "$t s",
                 t != 0
             ) {
                 a.temporizador.intValue = when (t) {
@@ -227,18 +238,23 @@ fun CameraScreen(a: MainActivity) {
                 a.savePrefs()
             }
             val g = a.cuadricula.value
-            Rapido(if (g) Icons.Rounded.GridOn else Icons.Rounded.GridOff, "Cuadrícula", g) {
+            Rapido(if (g) Icons.Rounded.GridOn else Icons.Rounded.GridOff, "Rejilla", g) {
                 a.cuadricula.value = !g
                 a.savePrefs()
             }
             val c = a.guardarColor.value
-            Rapido(Icons.Rounded.Palette, if (c) "+ Color" else "Solo B/N", c) {
+            Rapido(Icons.Rounded.Palette, "Color", c) {
                 a.guardarColor.value = !c
                 a.savePrefs()
             }
             val v = a.teclaVolumen.value
-            Rapido(Icons.Rounded.Smartphone, if (v) "Tecla vol." else "Vol. normal", v) {
+            Rapido(Icons.Rounded.Smartphone, "Tecla vol", v) {
                 a.teclaVolumen.value = !v
+                a.savePrefs()
+            }
+            val fe = a.fecha.value
+            Rapido(Icons.Rounded.DateRange, "Fecha", fe) {
+                a.fecha.value = !fe
                 a.savePrefs()
             }
         }
@@ -302,6 +318,43 @@ fun CameraScreen(a: MainActivity) {
                         .clip(RoundedCornerShape(12.dp)).background(Color(0x99000000))
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 )
+            }
+
+            if (a.grabando.value) {
+                val ms = a.tiempoGrabacion.longValue
+                val seg = ms / 1000
+                Row(
+                    Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                        .clip(RoundedCornerShape(14.dp)).background(Color(0xB3000000))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(12.dp).clip(CircleShape).background(Color(0xFFE53935)))
+                    Text(
+                        String.format(Locale.US, "  %02d:%02d", seg / 60, seg % 60),
+                        color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            val prog = a.procesando.value
+            if (prog != null && !panel) {
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .background(Color(0xB3000000)).padding(horizontal = Margen, vertical = 10.dp)
+                ) {
+                    Text(
+                        "Convirtiendo video a B/N… ${(prog * 100).roundToInt()}%",
+                        color = Color.White, fontSize = 14.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { prog },
+                        color = Color.White,
+                        trackColor = Color(0x44FFFFFF),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
 
             if (cuenta > 0) {
@@ -372,6 +425,16 @@ fun CameraScreen(a: MainActivity) {
             }
         }
 
+        // ---------- Foto / Video ----------
+        Row(
+            Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            ModoTab("FOTO", !a.modoVideo.value, enabled = !a.grabando.value) { a.setModo(false) }
+            Spacer(Modifier.width(18.dp))
+            ModoTab("VIDEO", a.modoVideo.value, enabled = !a.grabando.value) { a.setModo(true) }
+        }
+
         // ---------- Disparador ----------
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Margen + 8.dp, vertical = 14.dp),
@@ -391,7 +454,7 @@ fun CameraScreen(a: MainActivity) {
                         contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                     )
                 }
-                if (a.guardando.intValue > 0) {
+                if (a.guardando.intValue > 0 || a.procesando.value != null) {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.size(28.dp))
                 }
             }
@@ -404,18 +467,26 @@ fun CameraScreen(a: MainActivity) {
                     .clickable { disparar() },
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    Modifier.size(66.dp).clip(CircleShape)
-                        .background(if (cuenta > 0) Color(0xFFE53935) else Color.White)
-                )
+                val rojo = Color(0xFFE53935)
+                when {
+                    a.grabando.value -> Box(
+                        Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(rojo)
+                    )
+                    a.modoVideo.value -> Box(Modifier.size(66.dp).clip(CircleShape).background(rojo))
+                    else -> Box(
+                        Modifier.size(66.dp).clip(CircleShape)
+                            .background(if (cuenta > 0) rojo else Color.White)
+                    )
+                }
             }
 
             Spacer(Modifier.weight(1f))
 
-            // Cambiar cámara
+            // Cambiar cámara (no durante la grabación)
             Box(
-                Modifier.size(60.dp).clip(CircleShape).background(Color(0xFF222222))
-                    .clickable { a.switchCamera() },
+                Modifier.size(60.dp).clip(CircleShape)
+                    .background(if (a.grabando.value) Color(0xFF111111) else Color(0xFF222222))
+                    .clickable(enabled = !a.grabando.value) { a.switchCamera() },
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.Rounded.Cameraswitch, "Cambiar cámara", tint = Color.White, modifier = Modifier.size(30.dp)) }
         }
@@ -428,6 +499,19 @@ private fun Desvanecer(visible: Boolean, modifier: Modifier, content: @Composabl
     AnimatedVisibility(visible = visible, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
         content()
     }
+}
+
+@Composable
+private fun ModoTab(texto: String, activo: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        texto,
+        color = if (activo) Color.White else Suave,
+        fontSize = 15.sp,
+        fontWeight = if (activo) FontWeight.Bold else FontWeight.Normal,
+        modifier = Modifier.clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    )
 }
 
 @Composable

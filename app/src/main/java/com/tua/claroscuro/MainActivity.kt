@@ -37,14 +37,36 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.media3.common.Effect
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.ProgressHolder
+import androidx.media3.transformer.Transformer
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,6 +81,8 @@ class MainActivity : ComponentActivity() {
     var glView: CameraGLView? = null
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var recording: Recording? = null
     private var camera: Camera? = null
     private var surfaceTexture: SurfaceTexture? = null
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -84,6 +108,16 @@ class MainActivity : ComponentActivity() {
     val guardando = mutableIntStateOf(0)
     val disparoVolumen = mutableIntStateOf(0)
     val zoom = mutableFloatStateOf(1f)
+    val fecha = mutableStateOf(false)
+    val modoVideo = mutableStateOf(false)
+    val grabando = mutableStateOf(false)
+    val tiempoGrabacion = mutableLongStateOf(0L)
+    val procesando = mutableStateOf<Float?>(null) // progreso del video (0..1) o null
+    private var ultimaMime = "image/jpeg"
+
+    private val audioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (!ok) aviso("Sin permiso de micrófono: los videos se grabarán sin sonido")
+    }
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         permiso.value = ok
@@ -97,6 +131,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
+        shutterSound.load(MediaActionSound.START_VIDEO_RECORDING)
+        shutterSound.load(MediaActionSound.STOP_VIDEO_RECORDING)
         toneGen = try { ToneGenerator(AudioManager.STREAM_MUSIC, 70) } catch (e: Exception) { null }
 
         permiso.value = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
@@ -120,6 +156,7 @@ class MainActivity : ComponentActivity() {
                     else -> Surface.ROTATION_0
                 }
                 imageCapture?.targetRotation = r
+                videoCapture?.targetRotation = r
             }
         }
 
@@ -162,6 +199,7 @@ class MainActivity : ComponentActivity() {
         teclaVolumen.value = prefs.getBoolean("teclaVolumen", true)
         temporizador.intValue = prefs.getInt("temporizador", 0)
         flash.intValue = prefs.getInt("flash", ImageCapture.FLASH_MODE_OFF)
+        fecha.value = prefs.getBoolean("fecha", false)
     }
 
     fun savePrefs() {
@@ -178,6 +216,7 @@ class MainActivity : ComponentActivity() {
             .putBoolean("teclaVolumen", teclaVolumen.value)
             .putInt("temporizador", temporizador.intValue)
             .putInt("flash", flash.intValue)
+            .putBoolean("fecha", fecha.value)
             .apply()
     }
 
@@ -207,10 +246,18 @@ class MainActivity : ComponentActivity() {
         val st = surfaceTexture ?: return
         val main = ContextCompat.getMainExecutor(this)
 
+        val video = modoVideo.value
+        // En video el visor es 16:9 (como el video); en foto, 4:3
         val previewSelector = ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(
+                if (video) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            )
             .setResolutionStrategy(
-                ResolutionStrategy(Size(1440, 1080), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                ResolutionStrategy(
+                    if (video) Size(1920, 1080) else Size(1440, 1080),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                )
             )
             .build()
         val preview = Preview.Builder()
@@ -251,8 +298,21 @@ class MainActivity : ComponentActivity() {
         val selector = if (frontal.value) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         try {
             provider.unbindAll()
-            camera = provider.bindToLifecycle(this, selector, preview, capture)
-            imageCapture = capture
+            if (video) {
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(
+                        QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD))
+                    )
+                    .build()
+                val vc = VideoCapture.withOutput(recorder)
+                camera = provider.bindToLifecycle(this, selector, preview, vc)
+                videoCapture = vc
+                imageCapture = null
+            } else {
+                camera = provider.bindToLifecycle(this, selector, preview, capture)
+                imageCapture = capture
+                videoCapture = null
+            }
             zoom.floatValue = 1f
         } catch (e: Exception) {
             Toast.makeText(this, "No se pudo abrir la cámara", Toast.LENGTH_SHORT).show()
@@ -264,7 +324,19 @@ class MainActivity : ComponentActivity() {
     }
 
     fun switchCamera() {
+        if (grabando.value) return
         frontal.value = !frontal.value
+        bindCamera()
+    }
+
+    fun setModo(video: Boolean) {
+        if (grabando.value || modoVideo.value == video) return
+        modoVideo.value = video
+        if (video && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            audioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
         bindCamera()
     }
 
@@ -316,6 +388,7 @@ class MainActivity : ComponentActivity() {
         val ic = imageCapture ?: return
         val u = FxUniforms.from(estilo.value, ajustes.value) // el estilo del momento del disparo
         val saveColor = guardarColor.value
+        val sello = if (fecha.value) Sello.texto(System.currentTimeMillis(), conSegundos = false) else null
         if (sonido.value) shutterSound.play(MediaActionSound.SHUTTER_CLICK)
         guardando.intValue++
         ic.takePicture(cameraExecutor, object : ImageCapture.OnImageCapturedCallback() {
@@ -330,7 +403,7 @@ class MainActivity : ComponentActivity() {
                 }
                 lifecycleScope.launch {
                     try {
-                        if (bmp != null) processAndSave(bmp, rot, u, saveColor)
+                        if (bmp != null) processAndSave(bmp, rot, u, saveColor, sello)
                         else aviso("No se pudo leer la foto")
                     } catch (e: Throwable) {
                         aviso("No se pudo guardar la foto")
@@ -353,14 +426,26 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 
-    private suspend fun processAndSave(src: Bitmap, rot: Int, u: FxUniforms, saveColor: Boolean) {
-        val upright = withContext(Dispatchers.Default) { rotate(src, rot) }
+    private suspend fun processAndSave(src: Bitmap, rot: Int, u: FxUniforms, saveColor: Boolean, sello: String?) {
+        var upright = withContext(Dispatchers.Default) { rotate(src, rot) }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val carpeta = "${Environment.DIRECTORY_PICTURES}/Claroscuro"
-        if (saveColor) {
-            withContext(Dispatchers.IO) { saveJpeg(upright, "BN_${stamp}_color.jpg", "$carpeta/Originales") }
-        }
+        // Primero el blanco y negro (de la imagen limpia), luego el sello en cada versión
         val bw = Fx.apply(upright, u)
+        if (sello != null) withContext(Dispatchers.Default) { Sello.dibujar(bw, sello) }
+        if (saveColor) {
+            if (sello != null) {
+                if (!upright.isMutable) {
+                    val copia = upright.copy(Bitmap.Config.ARGB_8888, true)
+                    upright.recycle()
+                    upright = copia
+                }
+                val conSello = upright
+                withContext(Dispatchers.Default) { Sello.dibujar(conSello, sello) }
+            }
+            val original = upright
+            withContext(Dispatchers.IO) { saveJpeg(original, "BN_${stamp}_color.jpg", "$carpeta/Originales") }
+        }
         upright.recycle()
         val uri = withContext(Dispatchers.IO) { saveJpeg(bw, "BN_$stamp.jpg", carpeta) }
         val thumb = withContext(Dispatchers.Default) {
@@ -372,6 +457,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) {
             miniatura.value = thumb
             ultimaUri.value = uri
+            ultimaMime = "image/jpeg"
         } else {
             aviso("No se pudo guardar la foto")
         }
@@ -441,11 +527,153 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(
                 Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, "image/jpeg")
+                    .setDataAndType(uri, ultimaMime)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             )
         } catch (e: Exception) {
-            aviso("No hay app para ver fotos")
+            aviso("No hay app para abrirlo")
+        }
+    }
+
+    // ---------- Video ----------
+
+    fun toggleRecording() {
+        if (grabando.value) {
+            recording?.stop()
+            recording = null
+            return
+        }
+        if (procesando.value != null) {
+            aviso("Espera a que termine de procesar el video anterior")
+            return
+        }
+        val vc = videoCapture ?: return
+        val u = FxUniforms.from(estilo.value, ajustes.value) // el estilo al iniciar
+        val saveColor = guardarColor.value
+        val conFecha = fecha.value
+        val tmp = File(cacheDir, "grab_${System.currentTimeMillis()}.mp4")
+        var pending = vc.output.prepareRecording(this, FileOutputOptions.Builder(tmp).build())
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pending = pending.withAudioEnabled()
+        }
+        if (sonido.value) shutterSound.play(MediaActionSound.START_VIDEO_RECORDING)
+        var inicio = System.currentTimeMillis()
+        recording = pending.start(ContextCompat.getMainExecutor(this)) { ev ->
+            when (ev) {
+                is VideoRecordEvent.Start -> {
+                    inicio = System.currentTimeMillis()
+                    tiempoGrabacion.longValue = 0L
+                    grabando.value = true
+                }
+                is VideoRecordEvent.Status -> {
+                    tiempoGrabacion.longValue = ev.recordingStats.recordedDurationNanos / 1_000_000
+                }
+                is VideoRecordEvent.Finalize -> {
+                    grabando.value = false
+                    recording = null
+                    if (sonido.value) shutterSound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+                    if (tmp.exists() && tmp.length() > 0) {
+                        procesarVideo(tmp, u, saveColor, if (conFecha) inicio else null)
+                    } else {
+                        aviso("No se pudo grabar el video")
+                    }
+                }
+                else -> {}
+            }
+        }
+    }
+
+    /** Convierte el video grabado a blanco y negro (con el mismo efecto del visor). */
+    private fun procesarVideo(tmp: File, u: FxUniforms, saveColor: Boolean, inicioMs: Long?) {
+        procesando.value = 0f
+        val salida = File(cacheDir, "bn_${System.currentTimeMillis()}.mp4")
+        val efectos: List<Effect> = listOf(BnVideoEffect(u, inicioMs))
+        val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(tmp)))
+            .setEffects(Effects(emptyList<AudioProcessor>(), efectos))
+            .build()
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val carpeta = "${Environment.DIRECTORY_MOVIES}/Claroscuro"
+
+        val transformer = Transformer.Builder(this)
+            .setVideoMimeType(MimeTypes.VIDEO_H264)
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    lifecycleScope.launch {
+                        val uri = withContext(Dispatchers.IO) {
+                            if (saveColor) saveVideo(tmp, "BN_${stamp}_color.mp4", "$carpeta/Originales")
+                            saveVideo(salida, "BN_$stamp.mp4", carpeta)
+                        }
+                        tmp.delete()
+                        salida.delete()
+                        procesando.value = null
+                        if (uri != null) {
+                            val thumb = withContext(Dispatchers.IO) {
+                                try {
+                                    contentResolver.loadThumbnail(uri, Size(240, 320), null)
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            if (thumb != null) miniatura.value = thumb
+                            ultimaUri.value = uri
+                            ultimaMime = "video/mp4"
+                        } else {
+                            aviso("No se pudo guardar el video")
+                        }
+                    }
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    exportResult: ExportResult,
+                    exportException: ExportException
+                ) {
+                    lifecycleScope.launch {
+                        // Para no perder el video, guardamos el original a color
+                        withContext(Dispatchers.IO) {
+                            saveVideo(tmp, "BN_${stamp}_color.mp4", "$carpeta/Originales")
+                        }
+                        tmp.delete()
+                        salida.delete()
+                        procesando.value = null
+                        aviso("No se pudo convertir a B/N; se guardó el original a color")
+                    }
+                }
+            })
+            .build()
+
+        transformer.start(item, salida.absolutePath)
+
+        lifecycleScope.launch {
+            val holder = ProgressHolder()
+            while (procesando.value != null) {
+                if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
+                    procesando.value = holder.progress / 100f
+                }
+                delay(300)
+            }
+        }
+    }
+
+    private fun saveVideo(file: File, name: String, relPath: String): Uri? {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, relPath)
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+        return try {
+            contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+            uri
+        } catch (e: Exception) {
+            contentResolver.delete(uri, null, null)
+            null
         }
     }
 

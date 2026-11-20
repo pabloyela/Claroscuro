@@ -12,8 +12,8 @@ android {
         applicationId = "com.tua.claroscuro"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     // Llave fija: cada APK nuevo se instala encima del anterior
@@ -42,6 +42,7 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
     }
     buildFeatures {
         compose = true
@@ -63,4 +64,10 @@ dependencies {
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
+    implementation("androidx.camera:camera-video:$camerax")
+
+    val media3 = "1.5.1"
+    implementation("androidx.media3:media3-common:$media3")
+    implementation("androidx.media3:media3-effect:$media3")
+    implementation("androidx.media3:media3-transformer:$media3")
 }
