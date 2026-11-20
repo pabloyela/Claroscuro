@@ -2,6 +2,7 @@ package com.tua.claroscuro
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -73,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -149,6 +151,7 @@ fun CameraScreen(a: MainActivity) {
     var panel by remember { mutableStateOf(false) }
     var foco by remember { mutableStateOf<Offset?>(null) }
     val parpadeo = remember { Animatable(0f) }
+    val giro by animateFloatAsState(a.giroUi.intValue.toFloat(), label = "giro")
 
     fun disparar() {
         if (timerJob?.isActive == true && cuenta > 0) { // tocar otra vez cancela la cuenta regresiva
@@ -204,7 +207,8 @@ fun CameraScreen(a: MainActivity) {
                     ImageCapture.FLASH_MODE_AUTO -> "Auto"
                     else -> "Flash"
                 },
-                fl != ImageCapture.FLASH_MODE_OFF
+                fl != ImageCapture.FLASH_MODE_OFF,
+                giro
             ) {
                 a.setFlash(
                     when (fl) {
@@ -218,7 +222,8 @@ fun CameraScreen(a: MainActivity) {
             Rapido(
                 if (t == 0) Icons.Rounded.TimerOff else Icons.Rounded.Timer,
                 if (t == 0) "Timer" else "$t s",
-                t != 0
+                t != 0,
+                giro
             ) {
                 a.temporizador.intValue = when (t) {
                     0 -> 3
@@ -232,36 +237,38 @@ fun CameraScreen(a: MainActivity) {
             Rapido(
                 if (s) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
                 if (s) "Sonido" else "Silencio",
-                s
+                s,
+                giro
             ) {
                 a.sonido.value = !s
                 a.savePrefs()
             }
             val g = a.cuadricula.value
-            Rapido(if (g) Icons.Rounded.GridOn else Icons.Rounded.GridOff, "Rejilla", g) {
+            Rapido(if (g) Icons.Rounded.GridOn else Icons.Rounded.GridOff, "Rejilla", g, giro) {
                 a.cuadricula.value = !g
                 a.savePrefs()
             }
             val c = a.guardarColor.value
-            Rapido(Icons.Rounded.Palette, "Color", c) {
+            Rapido(Icons.Rounded.Palette, "Color", c, giro) {
                 a.guardarColor.value = !c
                 a.savePrefs()
             }
             val v = a.teclaVolumen.value
-            Rapido(Icons.Rounded.Smartphone, "Tecla vol", v) {
+            Rapido(Icons.Rounded.Smartphone, "Tecla vol", v, giro) {
                 a.teclaVolumen.value = !v
                 a.savePrefs()
             }
             val fe = a.fecha.value
-            Rapido(Icons.Rounded.DateRange, "Fecha", fe) {
+            Rapido(Icons.Rounded.DateRange, "Fecha", fe, giro) {
                 a.fecha.value = !fe
                 a.savePrefs()
             }
         }
 
-        // ---------- Visor ----------
+        // ---------- Visor (ocupa el espacio libre y se ajusta dentro) ----------
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(a.aspecto.floatValue).background(Color.Black)
+            Modifier.aspectRatio(a.aspecto.floatValue).background(Color.Black)
         ) {
             AndroidView(
                 factory = { ctx ->
@@ -289,6 +296,18 @@ fun CameraScreen(a: MainActivity) {
                         }
                     }
             )
+
+            if (!a.modoVideo.value) {
+                Text(
+                    if (a.formato169.value) "16:9" else "4:3",
+                    color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
+                        .rotate(giro)
+                        .clip(RoundedCornerShape(12.dp)).background(Color(0x99000000))
+                        .clickable { a.toggleFormato() }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
 
             if (a.cuadricula.value) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -360,7 +379,7 @@ fun CameraScreen(a: MainActivity) {
             if (cuenta > 0) {
                 Text(
                     "$cuenta", color = Color.White, fontSize = 120.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.Center)
+                    modifier = Modifier.align(Alignment.Center).rotate(giro)
                 )
             }
 
@@ -398,7 +417,7 @@ fun CameraScreen(a: MainActivity) {
             }
         }
 
-        Spacer(Modifier.weight(1f))
+        }
 
         // ---------- Estilos ----------
         LazyRow(
@@ -442,7 +461,7 @@ fun CameraScreen(a: MainActivity) {
         ) {
             // Última foto
             Box(
-                Modifier.size(60.dp).clip(RoundedCornerShape(14.dp))
+                Modifier.size(60.dp).rotate(giro).clip(RoundedCornerShape(14.dp))
                     .background(Color(0xFF222222)).border(2.dp, Color(0x55FFFFFF), RoundedCornerShape(14.dp))
                     .clickable { a.openLastPhoto() },
                 contentAlignment = Alignment.Center
@@ -488,7 +507,12 @@ fun CameraScreen(a: MainActivity) {
                     .background(if (a.grabando.value) Color(0xFF111111) else Color(0xFF222222))
                     .clickable(enabled = !a.grabando.value) { a.switchCamera() },
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Rounded.Cameraswitch, "Cambiar cámara", tint = Color.White, modifier = Modifier.size(30.dp)) }
+            ) {
+                Icon(
+                    Icons.Rounded.Cameraswitch, "Cambiar cámara", tint = Color.White,
+                    modifier = Modifier.size(30.dp).rotate(giro)
+                )
+            }
         }
     }
 }
@@ -515,13 +539,19 @@ private fun ModoTab(texto: String, activo: Boolean, enabled: Boolean, onClick: (
 }
 
 @Composable
-private fun RowScope.Rapido(icon: ImageVector, label: String, activo: Boolean, onClick: () -> Unit) {
+private fun RowScope.Rapido(
+    icon: ImageVector,
+    label: String,
+    activo: Boolean,
+    giro: Float = 0f,
+    onClick: () -> Unit
+) {
     Column(
         Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, label, tint = if (activo) Color.White else Suave, modifier = Modifier.size(26.dp))
+        Icon(icon, label, tint = if (activo) Color.White else Suave, modifier = Modifier.size(26.dp).rotate(giro))
         Text(
             label, fontSize = 11.sp, maxLines = 1,
             color = if (activo) Color.White else Suave,

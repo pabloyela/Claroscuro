@@ -109,6 +109,8 @@ class MainActivity : ComponentActivity() {
     val disparoVolumen = mutableIntStateOf(0)
     val zoom = mutableFloatStateOf(1f)
     val fecha = mutableStateOf(false)
+    val formato169 = mutableStateOf(false) // fotos en 16:9 (si no, 4:3)
+    val giroUi = mutableIntStateOf(0)       // giro de los íconos según cómo sostienes el teléfono
     val modoVideo = mutableStateOf(false)
     val grabando = mutableStateOf(false)
     val tiempoGrabacion = mutableLongStateOf(0L)
@@ -157,6 +159,11 @@ class MainActivity : ComponentActivity() {
                 }
                 imageCapture?.targetRotation = r
                 videoCapture?.targetRotation = r
+                giroUi.intValue = when (r) {
+                    Surface.ROTATION_90 -> 90
+                    Surface.ROTATION_270 -> -90
+                    else -> 0
+                }
             }
         }
 
@@ -200,6 +207,7 @@ class MainActivity : ComponentActivity() {
         temporizador.intValue = prefs.getInt("temporizador", 0)
         flash.intValue = prefs.getInt("flash", ImageCapture.FLASH_MODE_OFF)
         fecha.value = prefs.getBoolean("fecha", false)
+        formato169.value = prefs.getBoolean("formato169", false)
     }
 
     fun savePrefs() {
@@ -217,6 +225,7 @@ class MainActivity : ComponentActivity() {
             .putInt("temporizador", temporizador.intValue)
             .putInt("flash", flash.intValue)
             .putBoolean("fecha", fecha.value)
+            .putBoolean("formato169", formato169.value)
             .apply()
     }
 
@@ -247,15 +256,16 @@ class MainActivity : ComponentActivity() {
         val main = ContextCompat.getMainExecutor(this)
 
         val video = modoVideo.value
-        // En video el visor es 16:9 (como el video); en foto, 4:3
+        // Video siempre 16:9; fotos en 4:3 o 16:9 según el selector
+        val ancho = video || formato169.value
         val previewSelector = ResolutionSelector.Builder()
             .setAspectRatioStrategy(
-                if (video) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                if (ancho) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
                 else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
             )
             .setResolutionStrategy(
                 ResolutionStrategy(
-                    if (video) Size(1920, 1080) else Size(1440, 1080),
+                    if (ancho) Size(1920, 1080) else Size(1440, 1080),
                     ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
                 )
             )
@@ -282,11 +292,17 @@ class MainActivity : ComponentActivity() {
             request.provideSurface(surface, main) { surface.release() }
         }
 
-        // Unos 12 MP: buena calidad sin agotar la memoria al procesar
+        // 4:3 ≈ 12 MP, 16:9 ≈ 8 MP: buena calidad sin agotar la memoria al procesar
         val photoSelector = ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(
+                if (ancho) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            )
             .setResolutionStrategy(
-                ResolutionStrategy(Size(4000, 3000), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                ResolutionStrategy(
+                    if (ancho) Size(3840, 2160) else Size(4000, 3000),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                )
             )
             .build()
         val capture = ImageCapture.Builder()
@@ -327,6 +343,13 @@ class MainActivity : ComponentActivity() {
         if (grabando.value) return
         frontal.value = !frontal.value
         bindCamera()
+    }
+
+    fun toggleFormato() {
+        if (grabando.value) return
+        formato169.value = !formato169.value
+        savePrefs()
+        if (!modoVideo.value) bindCamera()
     }
 
     fun setModo(video: Boolean) {
