@@ -317,12 +317,7 @@ fun CameraScreen(a: MainActivity) {
             }
 
             // Panel de deslizadores
-            AnimatedVisibility(
-                visible = panel,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
+            Desvanecer(visible = panel, modifier = Modifier.align(Alignment.BottomCenter)) {
                 Column(
                     Modifier.fillMaxWidth().background(Color(0xB3000000))
                         .padding(horizontal = Margen, vertical = 8.dp)
@@ -424,6 +419,14 @@ fun CameraScreen(a: MainActivity) {
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.Rounded.Cameraswitch, "Cambiar cámara", tint = Color.White, modifier = Modifier.size(30.dp)) }
         }
+    }
+}
+
+/** Aparece/desaparece suavemente (fuera de Column para que Compose use la versión general). */
+@Composable
+private fun Desvanecer(visible: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    AnimatedVisibility(visible = visible, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
+        content()
     }
 }
 
